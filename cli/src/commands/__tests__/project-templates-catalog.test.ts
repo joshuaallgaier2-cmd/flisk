@@ -36,11 +36,16 @@ afterEach(() => {
 });
 
 describe("flisk project --list", () => {
-  it("prints the catalog as a stable JSON array with --json", () => {
+  it("prints the catalog in the standard machine-readable envelope with --json", () => {
     const result = runFlisk(["project", "--list", "--json"], { cwd: createTempDir() });
     expect(result.status, result.stderr).toBe(0);
-    const rows = JSON.parse(result.stdout);
-    expect(rows).toEqual(listProjectTemplates());
+    const output = JSON.parse(result.stdout);
+    expect(output).toEqual({
+      schemaVersion: 1,
+      data: { templates: listProjectTemplates() },
+      errors: [],
+    });
+    const rows = output.data.templates;
     expect(rows.map((row: { key: string }) => row.key)).toEqual(Object.keys(PROJECT_TEMPLATES));
     for (const row of rows) {
       expect(Object.keys(row)).toEqual(

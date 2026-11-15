@@ -26,6 +26,7 @@ import {
 } from "../utils/formatting.js";
 import { runJsonCommand } from "../utils/json-command.js";
 import { writeLanggraphProject } from "../utils/langgraph-template.js";
+import { createMachineEnvelope } from "../utils/machine-output.js";
 import { writeNextPostgresProject } from "../utils/next-postgres-template.js";
 import { findProjectRoot } from "../utils/paths.js";
 import { PROJECT_FEATURES } from "../utils/project-features.js";
@@ -348,13 +349,13 @@ export function writeDefaultProjectConfig(projectRoot: string): void {
 }
 
 /**
- * Prints the template catalog: with `json`, one stable JSON array on stdout (the same rows as the `project_templates`
- * MCP tool); otherwise one block per template for a person to read.
+ * Prints the template catalog: with `json`, one stable machine-output envelope on stdout (the same rows as the
+ * `project_templates` MCP tool); otherwise one block per template for a person to read.
  */
 export function printTemplateCatalog(json: boolean): void {
   const templates = listProjectTemplates();
   if (json) {
-    process.stdout.write(`${JSON.stringify(templates, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(createMachineEnvelope({ templates }))}\n`);
     return;
   }
   console.log(chalk.bold("Starter templates (flisk project <key>):\n"));
@@ -386,7 +387,7 @@ export const projectCommand = addYesOption(new Command("project"))
   )
   .option(
     "--list",
-    "List the starter templates (key, repo, description, pinned ref); with --json, a JSON array",
+    "List the starter templates (key, repo, description, pinned ref); with --json, a machine-readable envelope",
     false,
   )
   .option("--json", "Print one JSON envelope on stdout; implies --yes and --quiet", false)

@@ -18,6 +18,7 @@ import { ensureDirectory, ensureGitignore, writeJsonFile } from "../utils/file-h
 import { showCancelled, showCommandHeader, showDetail, showStep, showSuccess, } from "../utils/formatting.js";
 import { runJsonCommand } from "../utils/json-command.js";
 import { writeLanggraphProject } from "../utils/langgraph-template.js";
+import { createMachineEnvelope } from "../utils/machine-output.js";
 import { writeNextPostgresProject } from "../utils/next-postgres-template.js";
 import { findProjectRoot } from "../utils/paths.js";
 import { PROJECT_FEATURES } from "../utils/project-features.js";
@@ -293,13 +294,13 @@ export function writeDefaultProjectConfig(projectRoot) {
     writeJsonFile(join(projectRoot, ".flisk", PROJECT_JSON), projectConfig);
 }
 /**
- * Prints the template catalog: with `json`, one stable JSON array on stdout (the same rows as the `project_templates`
- * MCP tool); otherwise one block per template for a person to read.
+ * Prints the template catalog: with `json`, one stable machine-output envelope on stdout (the same rows as the
+ * `project_templates` MCP tool); otherwise one block per template for a person to read.
  */
 export function printTemplateCatalog(json) {
     const templates = listProjectTemplates();
     if (json) {
-        process.stdout.write(`${JSON.stringify(templates, null, 2)}\n`);
+        process.stdout.write(`${JSON.stringify(createMachineEnvelope({ templates }))}\n`);
         return;
     }
     console.log(chalk.bold("Starter templates (flisk project <key>):\n"));
@@ -320,7 +321,7 @@ export const projectCommand = addYesOption(new Command("project"))
     .option("--config-file <path>", "Load project config from existing JSON file")
     .option("-q, --quiet", "Only print what fails; used by `flisk demo`", false)
     .option("--no-agent-skills", "Do not write the Flisk agent skills (.claude/skills, .agents/skills) and AGENTS.md")
-    .option("--list", "List the starter templates (key, repo, description, pinned ref); with --json, a JSON array", false)
+    .option("--list", "List the starter templates (key, repo, description, pinned ref); with --json, a machine-readable envelope", false)
     .option("--json", "Print one JSON envelope on stdout; implies --yes and --quiet", false)
     .addHelpText("after", "\nExamples:\n  flisk project\n  flisk project demo\n  flisk project --check")
     .action(async (template, options) => {
