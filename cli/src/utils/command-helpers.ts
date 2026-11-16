@@ -91,6 +91,28 @@ export function addYesOption<T extends Command>(
   return command.option(YES_OPTION_FLAGS, description, false);
 }
 
+/**
+ * `flisk resource --list` / `-l` is a common mix-up for `flisk resources` (#4377): the create
+ * command has no such option, so point at the listing command instead of only "unknown option".
+ */
+export const RESOURCE_LIST_HINT = "To list resources, run `flisk resources` (or `flisk resources --json`).";
+
+export function addResourceListHint<T extends Command>(command: T): T {
+  const baseOutputError = command.configureOutput().outputError;
+  command.configureOutput({
+    outputError: (str: string, write: (str: string) => void) => {
+      const flagged = str.includes("unknown option '--list'") || str.includes("unknown option '-l'");
+      const message = flagged ? `${str}\n${RESOURCE_LIST_HINT}\n` : str;
+      if (baseOutputError) {
+        baseOutputError(message, write);
+      } else {
+        write(message);
+      }
+    },
+  });
+  return command;
+}
+
 export async function confirmAction(message: string, defaultValue = true): Promise<boolean> {
   const confirm = await promptConfirm({ message, initial: defaultValue });
 

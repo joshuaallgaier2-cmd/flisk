@@ -11,6 +11,12 @@ export declare function attachNoPositionalHint<T extends Command>(command: T, co
  * Registers the standard `-y, --yes` flag on a Commander command with shared help text.
  */
 export declare function addYesOption<T extends Command>(command: T, description?: string): T;
+/**
+ * `flisk resource --list` / `-l` is a common mix-up for `flisk resources` (#4377): the create
+ * command has no such option, so point at the listing command instead of only "unknown option".
+ */
+export declare const RESOURCE_LIST_HINT = "To list resources, run `flisk resources` (or `flisk resources --json`).";
+export declare function addResourceListHint<T extends Command>(command: T): T;
 export declare function confirmAction(message: string, defaultValue?: boolean): Promise<boolean>;
 export declare function assertValid(validation: ValidationResult, exitCode?: number): asserts validation is {
     valid: true;
