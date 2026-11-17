@@ -1091,6 +1091,20 @@ export const resourceCommand = addResourceListHint(addYesOption(new Command("res
                 stackName = newStack;
             }
         }
+        // A stack is just a folder name and a field in service.json, so a typo such as `--stack ap`
+        // next to an existing `app` creates a second stack silently. Warn (never block) when the
+        // chosen name is one or two edits from an existing stack, using the same helper as the
+        // command and resource-type suggestions (#4378).
+        const existingStackNames = [
+            ...new Set(allResources.map((r) => r.stack).filter((s) => Boolean(s))),
+        ];
+        let stackNote;
+        if (existingStackNames.length > 0 && !existingStackNames.includes(stackName)) {
+            const closest = suggestClosest(stackName, existingStackNames);
+            if (closest) {
+                stackNote = `Stack '${stackName}' is new. Existing stacks: ${existingStackNames.join(", ")}. Did you mean ${closest}?`;
+            }
+        }
         let finalResourcePath = resourcePath;
         let pathAdjustedFrom;
         if (!finalResourcePath) {
@@ -1279,6 +1293,7 @@ export const resourceCommand = addResourceListHint(addYesOption(new Command("res
                             : null)),
                 language: backendLanguage?.id ?? null,
                 discovered: isPathDiscovered(projectRoot, finalResourcePath, readDiscoveryPaths(projectRoot)),
+                ...(stackNote ? { warnings: [stackNote] } : {}),
             };
             return {
                 data: updatedServiceJson ? registrationReport(data, updatedServiceJson) : data,
@@ -1291,6 +1306,8 @@ export const resourceCommand = addResourceListHint(addYesOption(new Command("res
         console.log(chalk.gray(`  Stack: ${stackName}`));
         console.log(chalk.gray(`  Port: ${resource.port || (resource.type === DATABASE_RESOURCE_TYPE ? "N/A (database)" : "N/A (SDK)")}`));
         console.log(chalk.gray(`  Path:  ${finalResourcePath}`));
+        if (stackNote)
+            console.log(chalk.yellow(`\n⚠️  ${stackNote}`));
         if (shouldRegisterExisting && hasServiceJson) {
             console.log(chalk.yellow("\n⚠️  Existing resource detected - will update service.json only"));
         }

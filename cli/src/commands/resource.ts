@@ -1039,6 +1039,8 @@ export interface ResourceReport {
   framework: string | null;
   language: string | null;
   discovered: boolean;
+  /** Non-fatal notes, such as a stack name that looks like a typo of an existing one (#4378). */
+  warnings?: string[];
 }
 
 /** Registration keeps runtime fields, even when the creation flags would select another scaffold. */
@@ -1482,6 +1484,21 @@ export const resourceCommand = addResourceListHint(addYesOption(new Command("res
         }
       }
 
+      // A stack is just a folder name and a field in service.json, so a typo such as `--stack ap`
+      // next to an existing `app` creates a second stack silently. Warn (never block) when the
+      // chosen name is one or two edits from an existing stack, using the same helper as the
+      // command and resource-type suggestions (#4378).
+      const existingStackNames = [
+        ...new Set(allResources.map((r) => r.stack).filter((s): s is string => Boolean(s))),
+      ];
+      let stackNote: string | undefined;
+      if (existingStackNames.length > 0 && !existingStackNames.includes(stackName)) {
+        const closest = suggestClosest(stackName, existingStackNames);
+        if (closest) {
+          stackNote = `Stack '${stackName}' is new. Existing stacks: ${existingStackNames.join(", ")}. Did you mean ${closest}?`;
+        }
+      }
+
       let finalResourcePath = resourcePath;
       let pathAdjustedFrom: string | undefined;
       if (!finalResourcePath) {
@@ -1722,6 +1739,7 @@ export const resourceCommand = addResourceListHint(addYesOption(new Command("res
             finalResourcePath,
             readDiscoveryPaths(projectRoot),
           ),
+          ...(stackNote ? { warnings: [stackNote] } : {}),
         };
         return {
           data: updatedServiceJson ? registrationReport(data, updatedServiceJson) : data,
@@ -1739,6 +1757,8 @@ export const resourceCommand = addResourceListHint(addYesOption(new Command("res
         ),
       );
       console.log(chalk.gray(`  Path:  ${finalResourcePath}`));
+
+      if (stackNote) console.log(chalk.yellow(`\n⚠️  ${stackNote}`));
 
       if (shouldRegisterExisting && hasServiceJson) {
         console.log(

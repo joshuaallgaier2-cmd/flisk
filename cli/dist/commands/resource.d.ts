@@ -249,5 +249,7 @@ export interface ResourceReport {
     framework: string | null;
     language: string | null;
     discovered: boolean;
+    /** Non-fatal notes, such as a stack name that looks like a typo of an existing one (#4378). */
+    warnings?: string[];
 }
 export declare const resourceCommand: Command;
