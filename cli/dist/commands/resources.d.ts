@@ -6,6 +6,7 @@ export interface ListResourcesOptions {
     noStack?: boolean;
     ports?: boolean;
     json?: boolean;
+    list?: boolean;
 }
 export declare function runResourcesList(options: ListResourcesOptions): Promise<void>;
 export declare const resourcesCommand: Command;

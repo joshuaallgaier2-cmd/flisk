@@ -72,6 +72,11 @@ export const COMMAND_SPECS = [
                 description: "Output a versioned JSON resource report",
                 defaultValue: false,
             },
+            {
+                flags: "--list",
+                description: "List resources without a stack (use `flisk stack --list` instead)",
+                defaultValue: false,
+            },
         ],
         arguments: [],
         helpTexts: {

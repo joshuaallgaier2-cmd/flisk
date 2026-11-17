@@ -13,6 +13,12 @@ import { skippedServiceFiles, stackExists } from "../utils/services.js";
 import { includes } from "../utils/validation.js";
 export async function runResourcesList(options) {
     const action = async () => {
+        // Check if --list was passed (which is only valid for `flisk stack`)
+        if (options.list === true) {
+            throw new FliskError("The --list option is not valid for `flisk resources`.", [
+                "Use `flisk stack --list` to list resources that are not assigned to a stack.",
+            ]);
+        }
         if (options.json) {
             if (!findProjectRoot()) {
                 writeMachineError(errorFactories.notInProject());
@@ -136,6 +142,7 @@ export const resourcesCommand = routeUsageErrorsToJson(new Command("resources"))
     .addOption(noStackOption)
     .option("--ports", "Show port assignments in text view (JSON output is unchanged)", false)
     .option("--json", "Output a versioned JSON resource report", false)
+    .option("--list", "List resources without a stack (use `flisk stack --list` instead)", false)
     .addHelpText("after", "\nExamples:\n  flisk resources\n  flisk resources --type database\n  flisk resources --ports")
     .action(async (options) => {
     await runResourcesList(options);

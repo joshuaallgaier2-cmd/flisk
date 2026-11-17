@@ -80,6 +80,9 @@ export const stackCommand = addYesOption(new Command("stack"))
         // opens the assignment wizard. Treat it as --list instead; the MCP tool is
         // already called `stack_list`.
         const bareListRequested = stackName?.toLowerCase() === "list";
+        if (bareListRequested && !options.list && options.resources === undefined) {
+            console.log(chalk.yellow(`Note: Using "flisk stack list" as shorthand for "flisk stack --list". Use the --list flag explicitly in the future.`));
+        }
         if (bareListRequested && options.resources !== undefined) {
             throw new FliskError('"list" is reserved for listing stacks and cannot be used as a stack name.', [
                 "Use: flisk stack --list",
