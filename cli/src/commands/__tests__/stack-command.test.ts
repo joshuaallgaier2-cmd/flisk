@@ -551,4 +551,19 @@ describe("stackCommand", () => {
     const expectedStack = confirmed ? (flag === "--move" ? "backend" : undefined) : "legacy";
     expect(JSON.parse(readFileSync(paths["main/users-api"], "utf8")).stack).toBe(expectedStack);
   });
+
+  it("warns when using 'flisk stack list' as shorthand for 'flisk stack --list'", async () => {
+    setupProject([{ name: "gateway", stack: "core" }, { name: "orders-api" }]);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await stackCommand.parseAsync(["node", "flisk", "list"], { from: "node" });
+
+    // The warning should be shown
+    const output = logSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(output).toContain("Note: Using \"flisk stack list\" as shorthand for \"flisk stack --list\".");
+    expect(output).toContain("Use the --list flag explicitly");
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
 });

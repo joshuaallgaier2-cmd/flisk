@@ -353,4 +353,23 @@ describe("resources command", () => {
     expect(output).not.toContain("orders");
     logSpy.mockRestore();
   });
+
+  it("rejects --list option with hint to use flisk stack --list", async () => {
+    setupProject([]);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { exit } = captureExit();
+
+    await expect(
+      resourcesCommand.parseAsync(["node", "flisk", "--list"], { from: "node" }),
+    ).rejects.toThrow();
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("The --list option is not valid for `flisk resources`"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Use `flisk stack --list`"),
+    );
+    errorSpy.mockRestore();
+  });
 });
