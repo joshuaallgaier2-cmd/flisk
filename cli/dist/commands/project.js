@@ -511,7 +511,7 @@ export const projectCommand = addYesOption(new Command("project"))
     .option("--config-file <path>", "Load project config from existing JSON file")
     .option("-q, --quiet", "Only print what fails; used by `flisk demo`", false)
     .option("--no-agent-skills", "Do not write the Flisk agent skills (.claude/skills, .agents/skills) and AGENTS.md")
-    .option("--list", "List the starter templates (key, repo, description, pinned ref); with --json, a JSON array", false)
+    .option("--list", "List the starter templates (key, repo, description, pinned ref); with --json, the machine-readable envelope with templates under data.templates", false)
     .option("--json", "Print one JSON envelope on stdout; implies --yes and --quiet", false)
     .addHelpText("after", "\nExamples:\n  flisk project\n  flisk project demo\n  flisk project --check")
     .action(async (template, options) => {

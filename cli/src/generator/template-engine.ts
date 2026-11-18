@@ -611,7 +611,10 @@ function normalizeProjectConfig(value: unknown): ProjectConfig | null {
     return null;
   }
   const project = config.project as Record<string, unknown>;
-  if (typeof project.name !== "string" || typeof project.version !== "string") {
+  if (typeof project.name !== "string") {
+    return null;
+  }
+  if (typeof project.version !== "string") {
     return null;
   }
 
@@ -760,15 +763,20 @@ export function readProjectConfig(projectRoot: string): ProjectConfig {
 
   const projectConfig = normalizeProjectConfig(parsed);
   if (!projectConfig) {
-    throw new Error(
-      "Invalid project.json: missing or invalid required fields. " +
-        "Expected: version (string), project (object with name/version), " +
-        "phases (object with pre_alpha/alpha/beta/out_of_scope enabledStacks), " +
-        "optional_infra (object with boolean flags), " +
-        "discovery (object with paths array), " +
-        "capabilities (optional object of booleans), " +
-        "repos (optional array of { url, dir, branch? } with non-empty url and dir)",
-    );
+    const errorLines = [
+      "Invalid project.json: missing or invalid required fields.",
+      "Expected: version (string), project (object with name/version),",
+      "phases (object with pre_alpha/alpha/beta/out_of_scope enabledStacks),",
+      "optional_infra (object with boolean flags),",
+      "discovery (object with paths array),",
+      "capabilities (optional object of booleans),",
+      "repos (optional array of { url, dir, branch? } with non-empty url and dir).",
+    ];
+    if (typeof parsed === "object" && parsed !== null) {
+      const keys = Object.keys(parsed).join(", ");
+      errorLines.push(`Fields in your file: ${keys}.`);
+    }
+    throw new Error(errorLines.join(" "));
   }
 
   return projectConfig;
@@ -1462,15 +1470,18 @@ function verifyGeneratedResourceFiles(
   for (const generated of generatedFiles) {
     const snapshotPath = path.join(contractDir, generated.relativeFile);
     const display = path.relative(projectRoot, generated.fullPath);
+    // Windows path.relative uses backslashes; report project-relative paths with forward slashes everywhere.
+    const displayUnix = display.split(path.sep).join("/");
     if (!fs.existsSync(snapshotPath)) {
-      errors.push(`${display}: generated-file snapshot is missing (run flisk up to regenerate)`);
+      errors.push(
+        `${displayUnix}: generated-file snapshot is missing (run flisk up to regenerate)`,
+      );
     } else if (
       fs.readFileSync(generated.fullPath, "utf-8") !== fs.readFileSync(snapshotPath, "utf-8")
     ) {
-      // Windows path.relative uses backslashes; report project-relative paths with forward slashes everywhere.
-      handEdited.push(display.split(path.sep).join("/"));
+      handEdited.push(displayUnix);
       errors.push(
-        `${display}: generated file differs from its Flisk snapshot (run flisk up to regenerate)`,
+        `${displayUnix}: generated file differs from its Flisk snapshot (run flisk up to regenerate)`,
       );
     }
   }

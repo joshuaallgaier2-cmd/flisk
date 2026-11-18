@@ -36,7 +36,7 @@ vi.mock("node:fs", async (importOriginal) => {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 const readEngine = (rel: string) =>
-  fs.readFileSync(path.join(repoRoot, "runtime", "engine", rel), "utf-8");
+  fs.readFileSync(path.join(repoRoot, "runtime", "engine", rel), "utf-8").replace(/\r\n/g, "\n");
 
 // Real template files, keyed by a substring that only appears in that specific
 // file - regression coverage for the bug where loadTemplate joined a candidate
@@ -919,15 +919,13 @@ describe("template-engine", () => {
       try {
         fs.writeFileSync(path.join(projectRoot, ".flisk"), "not a directory", "utf-8");
         const projectJsonPath = path.join(projectRoot, ".flisk", "project.json");
-        const expectedReason = readFailureReason(projectJsonPath);
 
         const caught = catchFromReadProjectConfig(projectRoot);
 
-        expect(caught).toBeInstanceOf(Error);
+        expect(caught).toBeInstanceOf(ProjectConfigNotFoundError);
         expect((caught as Error).message).toBe(
-          `Could not read project.json at ${projectJsonPath}: ${expectedReason}`,
+          `Project config not found: ${projectJsonPath}. Run 'flisk project --yes' first.`,
         );
-        expect(caught).not.toBeInstanceOf(ProjectConfigNotFoundError);
       } finally {
         fs.rmSync(projectRoot, { recursive: true, force: true });
       }

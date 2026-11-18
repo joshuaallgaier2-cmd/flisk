@@ -1101,7 +1101,7 @@ export const COMMAND_SPECS: readonly CommandSpec[] = [
       {
         flags: "--list",
         description:
-          "List the starter templates (key, repo, description, pinned ref); with --json, a JSON array",
+          "List the starter templates (key, repo, description, pinned ref); with --json, the machine-readable envelope with templates under data.templates",
         defaultValue: false,
       },
       {
