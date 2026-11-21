@@ -28,7 +28,7 @@ const cleanup = vi.hoisted(() => ({
       idle: false,
     }),
   ),
-  findRunningFliskProjects: vi.fn((): string[] => []),
+  findRunningFliskProjects: vi.fn(async (): Promise<string[]> => []),
   pruneProjectNetworks: vi.fn(),
   stopProjectComposeProjects: vi.fn(),
   stopProjectTiltUp: vi.fn((): number[] => []),
@@ -128,7 +128,7 @@ describe("flisk down (in-process)", () => {
     tilt.getTiltfilePath.mockReturnValue(join(root, ".flisk/.flisk-out/Tiltfile"));
     tilt.isTiltAvailable.mockResolvedValue(true);
     tilt.runTilt.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
-    cleanup.findRunningFliskProjects.mockReturnValue([]);
+    cleanup.findRunningFliskProjects.mockResolvedValue([]);
     cleanup.lookupProjectTiltUpPids.mockReturnValue([]);
     // Something runs by default, so `down` reaches `tilt down`; the idle cases say otherwise.
     cleanup.projectComposeProjects.mockReturnValue(["demo-traefik"]);

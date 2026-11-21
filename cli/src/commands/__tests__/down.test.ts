@@ -38,7 +38,7 @@ const {
   stopProjectTiltUpMock: vi.fn(() => [] as number[]),
   waitForTiltUpExitMock: vi.fn(async () => true),
   createJsonEmitterMock: vi.fn(),
-  findRunningFliskProjectsMock: vi.fn((): string[] => []),
+  findRunningFliskProjectsMock: vi.fn(async (): Promise<string[]> => []),
   pruneDockerBuildCacheMock: vi.fn(),
   trimColimaAndMeasureMock: vi.fn(async (): Promise<unknown> => null),
   stopProjectComposeProjectsMock: vi.fn(),
@@ -170,7 +170,7 @@ describe("flisk down", () => {
     stopProjectTiltUpMock.mockReset().mockReturnValue([]);
     waitForTiltUpExitMock.mockReset().mockResolvedValue(true);
     createJsonEmitterMock.mockReset();
-    findRunningFliskProjectsMock.mockReset().mockReturnValue([]);
+    findRunningFliskProjectsMock.mockReset().mockResolvedValue([]);
     pruneDockerBuildCacheMock.mockReset();
     trimColimaAndMeasureMock.mockReset();
     trimColimaAndMeasureMock.mockResolvedValue(null);
@@ -262,7 +262,7 @@ describe("flisk down", () => {
   it("outside a project refuses to stop a foreign project without consent", async () => {
     const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "flisk-down-elsewhere-")));
     const project = scratchProject("foreign");
-    findRunningFliskProjectsMock.mockReturnValue([project]);
+    findRunningFliskProjectsMock.mockResolvedValue([project]);
     const stdinTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
     Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
     try {
@@ -283,7 +283,7 @@ describe("flisk down", () => {
   it("outside a project dry-runs the only running project without consent", async () => {
     const project = scratchProject("dry-run-foreign");
     const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "flisk-down-elsewhere-")));
-    findRunningFliskProjectsMock.mockReturnValue([project]);
+    findRunningFliskProjectsMock.mockResolvedValue([project]);
     try {
       const { output } = await downFrom(elsewhere, ["--dry-run"]);
       expect(runTiltMock).not.toHaveBeenCalled();
@@ -299,7 +299,7 @@ describe("flisk down", () => {
   it("outside a project stops the only running project after TTY confirmation", async () => {
     const project = scratchProject("tty-confirm");
     const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "flisk-down-elsewhere-")));
-    findRunningFliskProjectsMock.mockReturnValue([project]);
+    findRunningFliskProjectsMock.mockResolvedValue([project]);
     promptConfirmMock.mockResolvedValue(true);
     const stdinTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
     Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
@@ -319,7 +319,7 @@ describe("flisk down", () => {
   it("outside a project stops the only Flisk project that is running, from its folder", async () => {
     const project = scratchProject("running");
     const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "flisk-down-elsewhere-")));
-    findRunningFliskProjectsMock.mockReturnValue([project]);
+    findRunningFliskProjectsMock.mockResolvedValue([project]);
     try {
       const { tiltCwd, output } = await downFrom(elsewhere, ["--yes"]);
       expect(tiltCwd).toBe(project);
@@ -333,7 +333,7 @@ describe("flisk down", () => {
 
   it("outside a project lists the running projects instead of guessing when several run", async () => {
     const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "flisk-down-elsewhere-")));
-    findRunningFliskProjectsMock.mockReturnValue(["/work/shop", "/work/blog"]);
+    findRunningFliskProjectsMock.mockResolvedValue(["/work/shop", "/work/blog"]);
     try {
       const output = await downFails(elsewhere, []);
       expect(output).toContain("Not in a Flisk project, and 2 Flisk projects are running");
@@ -348,7 +348,7 @@ describe("flisk down", () => {
   it("--project stops that project from anywhere, and is preferred over a running one", async () => {
     const project = scratchProject("named");
     const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "flisk-down-elsewhere-")));
-    findRunningFliskProjectsMock.mockReturnValue(["/work/other"]);
+    findRunningFliskProjectsMock.mockResolvedValue(["/work/other"]);
     try {
       const { tiltCwd } = await downFrom(elsewhere, ["--yes", "--project", project]);
       expect(tiltCwd).toBe(project);
@@ -363,7 +363,7 @@ describe("flisk down", () => {
     const { createProgram } = await import("../../program.js");
     const project = scratchProject("via-root");
     const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "flisk-down-elsewhere-")));
-    findRunningFliskProjectsMock.mockReturnValue(["/work/other"]);
+    findRunningFliskProjectsMock.mockResolvedValue(["/work/other"]);
     getContainerRuntimeStatusMock.mockReturnValue("running");
     isTiltAvailableMock.mockResolvedValue(true);
     buildTiltDownArgsMock.mockReturnValue(["-f", "/fake/Tiltfile"]);
@@ -399,7 +399,7 @@ describe("flisk down", () => {
 
   it("inside a project stops that project even when another one is running", async () => {
     const project = scratchProject("here");
-    findRunningFliskProjectsMock.mockReturnValue(["/work/other"]);
+    findRunningFliskProjectsMock.mockResolvedValue(["/work/other"]);
     try {
       const { tiltCwd } = await downFrom(project, ["--yes"]);
       expect(tiltCwd).toBe(project);
