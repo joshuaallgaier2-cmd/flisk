@@ -5,7 +5,7 @@ import { execSync } from "node:child_process";
 import chalk from "chalk";
 import { Command } from "commander";
 import { hasVerdaccioLicense } from "../generator/extension-fetch.js";
-import { readProjectConfig } from "../generator/template-engine.js";
+import { readProjectConfig } from "../generator/project-config.js";
 import type { CheckResult, DoctorAction, HostPortPlan } from "../types/index.js";
 import {
   DEVCONTAINER_DOCKER_FIX,
@@ -40,6 +40,7 @@ import {
 } from "../utils/doctor-fix.js";
 import { checkDiskSpace } from "../utils/doctor-host.js";
 import { checkIdleProjects } from "../utils/doctor-idle.js";
+import { checkLocalServiceDependencies, checkWorktreeEnv } from "../utils/doctor-local-deps.js";
 import {
   checkEnvironmentVariables,
   checkFliskVersion,
@@ -220,12 +221,14 @@ export {
   checkGeneratedFiles,
   checkGeneratedProjectRuntimeAssets,
   checkLatestFliskVersion,
+  checkLocalServiceDependencies,
   checkPublishedBindAddress,
   checkResourceDiscovery,
   checkServiceHealth,
   checkServiceSmoke,
   checkTilt,
   checkTypeScriptTypeDependencies,
+  checkWorktreeEnv,
   checkWslProjectLocation,
   type DoctorCheckFn,
   formatDoctorSummary,
@@ -573,6 +576,9 @@ export const doctorCommand = new Command("doctor")
       () => checkDuplicateResourceNames(),
       () => checkDependsOnShape(),
       () => checkRequiredSecrets(checkDir, undefined, process.env),
+      // A fresh worktree has the sources but not the gitignored installs or .env (#4048).
+      () => checkLocalServiceDependencies(checkDir),
+      () => checkWorktreeEnv(checkDir),
     ];
     const graphChecks: ProjectCheck[] = [
       () => checkCircularDependencies(),
