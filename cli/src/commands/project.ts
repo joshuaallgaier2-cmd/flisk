@@ -31,7 +31,6 @@ import { writeNextPostgresProject } from "../utils/next-postgres-template.js";
 import { LOCKFILE_COMMAND } from "../utils/npm-lockfile.js";
 import { findProjectRoot } from "../utils/paths.js";
 import { PROJECT_FEATURES } from "../utils/project-features.js";
-import { deriveProjectName } from "../utils/project-name.js";
 import {
   listProjectTemplates,
   PROJECT_TEMPLATES,
