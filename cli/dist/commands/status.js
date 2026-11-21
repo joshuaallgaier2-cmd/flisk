@@ -14,9 +14,10 @@ import { getHostPortPlan, resolveRuntimeTiltPort } from "../utils/host-port-conf
 import { inferNodeProject, inferredStateRoot } from "../utils/inferred-node-project.js";
 import { createMachineEnvelope, writeMachineError } from "../utils/machine-output.js";
 import { isNativeRunSupervisorAlive, nativeServiceStates, readNativeRunState, } from "../utils/native-runtime.js";
-import { isNativeProject } from "../utils/native-service.js";
+import { isNativeProject, isNativeService } from "../utils/native-service.js";
 import { findProjectRoot } from "../utils/paths.js";
 import { resolveCommandProject } from "../utils/project-resolution.js";
+import { relativeResourceFolder } from "../utils/resource-relative-path.js";
 import { deriveServiceStates } from "../utils/service-runtime-state.js";
 import { sampleServiceUsage, } from "../utils/service-usage.js";
 import { skippedServiceFiles } from "../utils/services.js";
@@ -104,7 +105,7 @@ export const statusCommand = attachNoPositionalHint(new Command("status"))
     .option("--unhealthy", "Show only services that are failing or still starting", false)
     .option("--strict", "Exit 1 when any service is not ready or nothing is running", false)
     .option("--usage", "Show CPU, memory and process usage per service", false)
-    .option("--project <path>", "Show status for the Flisk project in this folder (default: the current project)")
+    .option("--project <path>", "Path to the Flisk project to report on (default: the current project)")
     .addHelpText("after", "\nExamples:\n  flisk status\n  flisk status --resources\n  flisk status --unhealthy\n  flisk status --usage\n  flisk status --json\n  flisk status --strict")
     .action(async (options, command) => {
     const project = options.project ?? command.optsWithGlobals().project;
@@ -176,7 +177,7 @@ export const statusCommand = attachNoPositionalHint(new Command("status"))
                 return;
             }
         }
-        const projectRoot = resolveCommandProject({
+        const projectRoot = await resolveCommandProject({
             commandName: "status",
             project,
             json: options.json,
@@ -211,7 +212,10 @@ export const statusCommand = attachNoPositionalHint(new Command("status"))
             : null;
         const nativeRun = nativeStates && projectRoot ? readNativeRunState(projectRoot) : null;
         const gatewayEnabled = isGatewayEnabled(projectRoot, options);
-        const platformServices = describePlatformServices(projectRoot, discovery.resources, options);
+        // A project of local processes runs no router and no database container, so its resources use neither.
+        const platformServices = nativeProject
+            ? []
+            : describePlatformServices(projectRoot, discovery.resources, options);
         // `extraPorts` published through ${VAR:-default} resolve from the shell and the project .env, like Compose.
         const envLookup = projectEnvLookup(projectRoot ?? undefined);
         let tiltAvailable = false;
@@ -377,6 +381,9 @@ export const statusCommand = attachNoPositionalHint(new Command("status"))
                     stack: resource.stack ?? null,
                     type: resource.type ?? "unknown",
                     port: resource.port ?? null,
+                    ...(projectRoot
+                        ? { path: relativeResourceFolder(projectRoot, resource.configPath) }
+                        : {}),
                     ...buildServicePorts(resource, portPlan?.ingressHttp, { gateway: gatewayEnabled, native: nativeProject }, envLookup),
                     status: serviceStates?.[resource.name]?.status ?? "unknown",
                     ...(serviceStates?.[resource.name]?.reason
@@ -387,7 +394,10 @@ export const statusCommand = attachNoPositionalHint(new Command("status"))
                         : {}),
                     ...(options.usage ? { usage: usage?.[resource.name] ?? null } : {}),
                 })),
-                ports: buildStackPorts(portPlan, tiltPort, { gateway: gatewayEnabled }),
+                ports: buildStackPorts(portPlan, tiltPort, {
+                    gateway: gatewayEnabled,
+                    native: nativeProject,
+                }),
                 stacks: discovery.stacks.map((stack) => ({
                     name: stack.name,
                     resourceCount: stack.resourceCount,
@@ -459,8 +469,18 @@ export const statusCommand = attachNoPositionalHint(new Command("status"))
         if (!unhealthyOnly) {
             console.log();
             console.log(chalk.bold("Platform services:"));
-            for (const service of platformServices) {
-                showDetail(`${service.name}: ${service.reason}`);
+            if (nativeProject) {
+                // Say what runs instead of naming a router and a database the runtime does not start.
+                // A mixed run still starts its declared `image` containers with Docker, so do not deny those.
+                const mixedRun = all.resources.some((resource) => !isNativeService(resource));
+                showDetail(mixedRun
+                    ? "none: no platform-managed router or database; command services run as local processes on localhost, declared image services run as containers"
+                    : "none: services run as local processes on localhost (no router, no database container)");
+            }
+            else {
+                for (const service of platformServices) {
+                    showDetail(`${service.name}: ${service.reason}`);
+                }
             }
         }
         if (sharedInfraGroup && !unhealthyOnly) {
