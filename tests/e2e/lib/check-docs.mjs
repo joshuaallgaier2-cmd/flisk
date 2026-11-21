@@ -7,6 +7,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { checkMovedSuiteDocs } from "./docs-moved-suites.mjs";
+import { posixOnlyPrerequisiteInstalls } from "./prerequisite-installs.mjs";
 
 const root = process.cwd();
 const failures = [];
@@ -84,6 +85,9 @@ for (const file of markdown) {
   for (const match of body.matchAll(/!?\[[^\]]*\]\(([^)\s]+(?:\s+"[^"]*")?)\)/g)) checkTarget(file, match[1]);
   for (const match of body.matchAll(/^\[[^\]]+\]:\s*(\S+)/gm)) checkTarget(file, match[1]);
   if (/docs\/ai-agents\.md/.test(text)) fail(file, "references the removed docs/ai-agents.md");
+  for (const problem of posixOnlyPrerequisiteInstalls(text)) {
+    fail(file, `prerequisites table: ${problem}`);
+  }
 }
 
 // The llms files are plain text: check markdown links and bare repo-relative paths.
@@ -153,4 +157,6 @@ if (failures.length > 0) {
   console.error(`${failures.length} documentation problem(s):\n${failures.map((f) => `  ${f}`).join("\n")}`);
   process.exit(1);
 }
-console.log(`checked ${markdown.length} markdown files and ${llmsFiles.length} llms files: all links, anchors and references resolve`);
+console.log(
+  `checked ${markdown.length} markdown files and ${llmsFiles.length} llms files: links, anchors, references and prerequisite installs resolve`,
+);
