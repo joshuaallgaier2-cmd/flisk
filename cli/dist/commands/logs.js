@@ -8,6 +8,7 @@ import { dependsOnOf } from "../utils/dependency-graph.js";
 import { getDeferredResourceNames } from "../utils/doctor-runtime.js";
 import { errorFactories, FliskError, runCommand, showErrorAndExit } from "../utils/errors.js";
 import { resolveRuntimeTiltPort } from "../utils/host-port-config.js";
+import { applyLogCursor, isValidCursor } from "../utils/log-cursors.js";
 import { createMachineEnvelope } from "../utils/machine-output.js";
 import { nativeServiceStates, readNativeLogLines } from "../utils/native-runtime.js";
 import { isNativeProject } from "../utils/native-service.js";
@@ -17,7 +18,7 @@ import { deriveServiceStates } from "../utils/service-runtime-state.js";
 import { discoverResourcesFromRoot } from "../utils/services.js";
 import { unhealthyServiceNames } from "../utils/status-groups.js";
 import { isTiltAvailable, runTilt } from "../utils/tilt.js";
-import { DEFAULT_LOG_TAIL, filterLogLinesSince, filterLogSource, isTiltConnectionFailure, isValidLogSource, isValidSince, isValidTail, LOG_SOURCES, MAX_LOG_TAIL, parseTiltLogLines, parseTiltWebviewLogLines, sinceMilliseconds, } from "../utils/tilt-logs.js";
+import { DEFAULT_LOG_TAIL, filterLogSource, isTiltConnectionFailure, isValidLogSource, isValidSince, isValidTail, LOG_SOURCES, MAX_LOG_TAIL, parseTiltLogLines, sinceMilliseconds, } from "../utils/tilt-logs.js";
 import { tiltUnreachableMessage } from "../utils/tilt-unreachable-message.js";
 import { isValidPort } from "../utils/validation.js";
 /** Resource names Tilt knows about, or null when they cannot be listed (the logs call then reports the real error). */
@@ -84,13 +85,14 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
     .option("-s, --service <names...>", "Only these services (names as in flisk resources)")
     .option("-f, --follow", "Live follow is unavailable; use flisk ui or repeat with --since")
     .option("--tail <n>", "Number of most recent lines to return", String(DEFAULT_LOG_TAIL))
-    .option("--since <duration>", "Only logs newer than this duration, using real event times, for example 30s, 5m, 1h")
+    .option("--since <duration>", "Only logs newer than this duration, for example 30s, 5m, 1h")
+    .option("--after <cursor>", "Only lines with a sequence number greater than this cursor, returned as data.nextCursor by a previous --json read")
     .option("--source <source>", "Only runtime output (what the service printed) or build output (image build steps); a crash cause is in runtime")
     .option("--unhealthy", "Only services that are failing or still starting", false)
     .option("--port <n>", "Tilt UI port for Docker runtime (default: TILT_PORT, then the project's saved port, then 10350)")
-    .option("--project <path>", "View logs for the Flisk project in this folder (default: the current project)")
+    .option("--project <path>", "Path to the Flisk project whose logs to read (default: the current project)")
     .option("--json", "Output one JSON object and exit", false)
-    .addHelpText("after", "\nExamples:\n  flisk logs --tail 50\n  flisk logs --service orders-api --since 5m\n  flisk logs --unhealthy --json\n  flisk logs --service orders-api --source runtime --json")
+    .addHelpText("after", "\nExamples:\n  flisk logs --tail 50\n  flisk logs --service orders-api --since 5m\n  flisk logs --unhealthy --json\n  flisk logs --service orders-api --source runtime --json\n  flisk logs --json --after 42")
     .action(async (options, command) => {
     let secrets = [];
     const fail = (code, rawMessage, exitCode = 1, suggestions = []) => {
@@ -120,6 +122,9 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
     if (options.since !== undefined && !isValidSince(options.since)) {
         fail("USAGE", "--since must be a duration such as 30s, 5m or 1h", 2);
     }
+    if (options.after !== undefined && !isValidCursor(String(options.after))) {
+        fail("USAGE", "--after must be a non-negative integer cursor from a previous logs read", 2);
+    }
     if (options.source !== undefined && !isValidLogSource(options.source)) {
         fail("USAGE", `--source must be one of: ${LOG_SOURCES.join(", ")}`, 2);
     }
@@ -128,6 +133,7 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
     if (!isValidPort(portText))
         fail("USAGE", "--port must be a valid port number", 2);
     const tail = Number(options.tail);
+    const after = options.after === undefined ? undefined : Number(options.after);
     const services = options.service ?? [];
     const reportAllHealthy = () => {
         if (options.json) {
@@ -138,13 +144,15 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
                 ...(source ? { source } : {}),
                 lines: [],
                 unhealthy: [],
+                nextCursor: after ?? 0,
+                truncated: false,
             })));
             return;
         }
         console.log("All services are healthy; nothing to show with --unhealthy.");
     };
     const action = async () => {
-        const projectRoot = resolveCommandProject({
+        const projectRoot = await resolveCommandProject({
             commandName: "logs",
             project: options.project ?? command.optsWithGlobals().project,
             json: options.json,
@@ -189,7 +197,9 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
                 tail: source ? MAX_LOG_TAIL : tail,
                 sinceMs: options.since === undefined ? undefined : sinceMilliseconds(options.since),
             });
-            const lines = redactLogLines((source ? filterLogSource(read, source) : read).slice(-tail), secrets);
+            // Number before redaction: a secret added later must not move a line's seq.
+            const page = applyLogCursor((source ? filterLogSource(read, source) : read).slice(-tail), after);
+            const lines = redactLogLines(page.lines, secrets);
             if (options.json) {
                 console.log(JSON.stringify(redactValue(createMachineEnvelope({
                     services,
@@ -197,6 +207,8 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
                     since: options.since ?? null,
                     ...(source ? { source } : {}),
                     lines,
+                    nextCursor: page.nextCursor,
+                    truncated: page.truncated,
                 }), secrets)));
                 return;
             }
@@ -241,54 +253,31 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
             if (selectedServices.length === 0)
                 return reportAllHealthy();
         }
-        // In #4197, `tilt logs --since` returned the whole stored log and JSON lines carried the query time. For a
-        // real time window, read the webview dump: it carries the timestamp Tilt recorded with each segment.
-        const structured = Boolean(options.json) || source !== undefined || options.since !== undefined;
-        let lines;
-        if (options.since !== undefined) {
-            const dump = await runTilt("dump", ["webview", "--port", activePortText], {
-                inheritStdio: false,
-            });
-            if (dump.exitCode !== 0) {
-                const detail = dump.stderr.trim();
-                if (!detail || isTiltConnectionFailure(detail)) {
-                    fail("TILT_NOT_RUNNING", tiltUnreachableMessage(activePortText));
-                }
-                fail("TILT_LOG_TIMES_UNAVAILABLE", `Cannot read Tilt log timestamps for --since: ${detail}`, 1, ["Omit --since to read all buffered logs"]);
+        // A source filter needs structured lines, and the tail must count the lines kept, not the build output before them.
+        const structured = Boolean(options.json) || source !== undefined;
+        const args = ["--port", activePortText, "--tail", String(source ? MAX_LOG_TAIL : tail)];
+        if (options.since !== undefined)
+            args.push("--since", options.since);
+        if (structured)
+            args.push("--json");
+        // `--` so a service name that starts with "-" is never read as a Tilt flag.
+        if (selectedServices.length > 0)
+            args.push("--", ...selectedServices);
+        const result = await runTilt("logs", args, { inheritStdio: false });
+        if (result.exitCode !== 0) {
+            const detail = result.stderr.trim();
+            if (!detail || isTiltConnectionFailure(detail)) {
+                fail("TILT_NOT_RUNNING", tiltUnreachableMessage(activePortText));
             }
-            // Bound the parse, then filter by service/source/time and apply --tail last, so --tail counts returned lines.
-            const parsed = parseTiltWebviewLogLines(dump.stdout, MAX_LOG_TAIL);
-            if (parsed === null) {
-                return fail("TILT_LOG_TIMES_UNAVAILABLE", "Tilt did not return readable log timestamps for --since.", 1, ["Omit --since to read all buffered logs", "Check the Tilt version with: tilt version"]);
-            }
-            const scoped = selectedServices.length > 0
-                ? parsed.filter((line) => line.resource !== null && selectedServices.includes(line.resource))
-                : parsed;
-            const dated = filterLogLinesSince(scoped, sinceMilliseconds(options.since));
-            lines = redactLogLines((source ? filterLogSource(dated, source) : dated).slice(-tail), secrets);
+            fail("TILT_LOGS_FAILED", `tilt logs failed: ${detail}`);
         }
-        else {
-            const args = ["--port", activePortText, "--tail", String(source ? MAX_LOG_TAIL : tail)];
-            if (structured)
-                args.push("--json");
-            // `--` so a service name that starts with "-" is never read as a Tilt flag.
-            if (selectedServices.length > 0)
-                args.push("--", ...selectedServices);
-            const result = await runTilt("logs", args, { inheritStdio: false });
-            if (result.exitCode !== 0) {
-                const detail = result.stderr.trim();
-                if (!detail || isTiltConnectionFailure(detail)) {
-                    fail("TILT_NOT_RUNNING", tiltUnreachableMessage(activePortText));
-                }
-                fail("TILT_LOGS_FAILED", `tilt logs failed: ${detail}`);
-            }
-            if (!structured) {
-                process.stdout.write(redactSecrets(result.stdout, secrets));
-                return;
-            }
-            const parsed = parseTiltLogLines(result.stdout, source ? MAX_LOG_TAIL : tail);
-            lines = redactLogLines((source ? filterLogSource(parsed, source) : parsed).slice(-tail), secrets);
+        if (!structured) {
+            process.stdout.write(redactSecrets(result.stdout, secrets));
+            return;
         }
+        const parsed = parseTiltLogLines(result.stdout, source ? MAX_LOG_TAIL : tail);
+        const page = applyLogCursor((source ? filterLogSource(parsed, source) : parsed).slice(-tail), after);
+        const lines = redactLogLines(page.lines, secrets);
         if (!options.json) {
             const width = Math.max(0, ...lines.map((line) => line.resource?.length ?? 0));
             for (const line of lines) {
@@ -302,6 +291,8 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
             since: options.since ?? null,
             ...(source ? { source } : {}),
             lines,
+            nextCursor: page.nextCursor,
+            truncated: page.truncated,
         }), secrets)));
     };
     await runCommand(action);

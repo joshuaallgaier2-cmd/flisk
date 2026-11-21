@@ -10,6 +10,7 @@ import { dependsOnOf } from "../utils/dependency-graph.js";
 import { getDeferredResourceNames } from "../utils/doctor-runtime.js";
 import { errorFactories, FliskError, runCommand, showErrorAndExit } from "../utils/errors.js";
 import { resolveRuntimeTiltPort } from "../utils/host-port-config.js";
+import { applyLogCursor, isValidCursor } from "../utils/log-cursors.js";
 import { createMachineEnvelope } from "../utils/machine-output.js";
 import { nativeServiceStates, readNativeLogLines } from "../utils/native-runtime.js";
 import { isNativeProject } from "../utils/native-service.js";
@@ -117,6 +118,10 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
     "Only logs newer than this duration, using real event times, for example 30s, 5m, 1h",
   )
   .option(
+    "--after <cursor>",
+    "Only lines with a sequence number greater than this cursor, returned as data.nextCursor by a previous --json read",
+  )
+  .option(
     "--source <source>",
     "Only runtime output (what the service printed) or build output (image build steps); a crash cause is in runtime",
   )
@@ -127,12 +132,12 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
   )
   .option(
     "--project <path>",
-    "View logs for the Flisk project in this folder (default: the current project)",
+    "Path to the Flisk project whose logs to read (default: the current project)",
   )
   .option("--json", "Output one JSON object and exit", false)
   .addHelpText(
     "after",
-    "\nExamples:\n  flisk logs --tail 50\n  flisk logs --service orders-api --since 5m\n  flisk logs --unhealthy --json\n  flisk logs --service orders-api --source runtime --json",
+    "\nExamples:\n  flisk logs --tail 50\n  flisk logs --service orders-api --since 5m\n  flisk logs --unhealthy --json\n  flisk logs --service orders-api --source runtime --json\n  flisk logs --json --after 42",
   )
   .action(async (options, command: Command) => {
     let secrets: string[] = [];
@@ -176,6 +181,9 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
     if (options.since !== undefined && !isValidSince(options.since)) {
       fail("USAGE", "--since must be a duration such as 30s, 5m or 1h", 2);
     }
+    if (options.after !== undefined && !isValidCursor(String(options.after))) {
+      fail("USAGE", "--after must be a non-negative integer cursor from a previous logs read", 2);
+    }
     if (options.source !== undefined && !isValidLogSource(options.source)) {
       fail("USAGE", `--source must be one of: ${LOG_SOURCES.join(", ")}`, 2);
     }
@@ -183,6 +191,8 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
     const portText = options.port ?? process.env.TILT_PORT ?? String(STANDARD_PORTS.tiltUi);
     if (!isValidPort(portText)) fail("USAGE", "--port must be a valid port number", 2);
     const tail = Number(options.tail);
+    const after: number | undefined =
+      options.after === undefined ? undefined : Number(options.after);
     const services: string[] = options.service ?? [];
 
     const reportAllHealthy = (): void => {
@@ -196,6 +206,8 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
               ...(source ? { source } : {}),
               lines: [],
               unhealthy: [],
+              nextCursor: after ?? 0,
+              truncated: false,
             }),
           ),
         );
@@ -205,7 +217,7 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
     };
 
     const action = async (): Promise<void> => {
-      const projectRoot = resolveCommandProject({
+      const projectRoot = await resolveCommandProject({
         commandName: "logs",
         project: options.project ?? command.optsWithGlobals().project,
         json: options.json,
@@ -252,10 +264,12 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
           tail: source ? MAX_LOG_TAIL : tail,
           sinceMs: options.since === undefined ? undefined : sinceMilliseconds(options.since),
         });
-        const lines = redactLogLines(
+        // Number before redaction: a secret added later must not move a line's seq.
+        const page = applyLogCursor(
           (source ? filterLogSource(read, source) : read).slice(-tail),
-          secrets,
+          after,
         );
+        const lines = redactLogLines(page.lines, secrets);
         if (options.json) {
           console.log(
             JSON.stringify(
@@ -266,6 +280,8 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
                   since: options.since ?? null,
                   ...(source ? { source } : {}),
                   lines,
+                  nextCursor: page.nextCursor,
+                  truncated: page.truncated,
                 }),
                 secrets,
               ),
@@ -387,6 +403,8 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
           secrets,
         );
       }
+      const page = applyLogCursor(lines, after);
+      lines = page.lines;
       if (!options.json) {
         const width = Math.max(0, ...lines.map((line) => line.resource?.length ?? 0));
         for (const line of lines) {
@@ -405,6 +423,8 @@ export const logsCommand = attachNoPositionalHint(new Command("logs"))
               since: options.since ?? null,
               ...(source ? { source } : {}),
               lines,
+              nextCursor: page.nextCursor,
+              truncated: page.truncated,
             }),
             secrets,
           ),
