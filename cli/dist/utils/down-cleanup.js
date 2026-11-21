@@ -2,30 +2,12 @@
 // SPDX-License-Identifier: MIT
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, relative as relativePath, resolve as resolvePath, sep } from "node:path";
 import { toComposeProjectName } from "./compose-project-name.js";
+import { isNativeRunSupervisorAlive, readNativeRunState, } from "./native-runtime.js";
+import { readProjectRecords } from "./project-registry.js";
 const run = (command, args) => execFileSync(command, args, { encoding: "utf-8", stdio: "pipe", windowsHide: true });
-/**
- * The one process-table read used by every down discovery path. Throws when `ps` cannot be read so callers can choose
- * between "no process" and "could not look"; the Windows caller treats the platform as having no process table.
- */
-export function readProcessTable(platform = process.platform, commandRunner = run) {
-    if (platform === "win32")
-        return [];
-    const output = commandRunner("ps", ["-axo", "pid=,command="]);
-    const entries = [];
-    for (const line of output.split(/\r?\n/)) {
-        const match = /^\s*(\d+)\s+(.*)$/.exec(line);
-        if (!match)
-            continue;
-        entries.push({ pid: Number(match[1]), command: match[2] ?? "" });
-    }
-    return entries;
-}
-/** The program a command line starts, without its folders. */
-export function processExecutable(command) {
-    return (command.split(/\s+/)[0] ?? "").split(/[\\/]/).at(-1) ?? "";
-}
 /** Network names the engine creates per project (see engine/.../docker/constants.star and init-networks). */
 const PROJECT_NETWORK_SUFFIXES = [
     "traefik-public",
@@ -148,24 +130,28 @@ export function planProjectNetworkPrune(projectName, commandRunner = run, stoppe
 export function lookupProjectTiltUpPids(tiltfilePath, platform = process.platform, commandRunner = run) {
     if (platform === "win32")
         return null;
-    let entries;
+    let output;
     try {
-        entries = readProcessTable(platform, commandRunner);
+        output = commandRunner("ps", ["-axo", "pid=,command="]);
     }
     catch {
         return null;
     }
-    // An empty table can also mean `ps` failed inside the reader; the caller cannot tell either way, and treats it as none.
     const pids = [];
-    for (const { pid, command } of entries) {
+    for (const line of output.split(/\r?\n/)) {
+        const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+        if (!match)
+            continue;
+        const command = match[2] ?? "";
+        const exe = (command.split(/\s+/)[0] ?? "").split("/").at(-1);
         const target = ` -f ${tiltfilePath}`;
         const at = command.indexOf(target);
         const boundary = command[at + target.length];
-        if (processExecutable(command) === "tilt" &&
+        if (exe === "tilt" &&
             /^\S+\s+up\s/.test(command) &&
             at > 0 &&
             (boundary === undefined || boundary === " ")) {
-            pids.push(pid);
+            pids.push(Number(match[1]));
         }
     }
     return pids;
@@ -178,28 +164,50 @@ export function findProjectTiltUpPids(tiltfilePath, platform = process.platform,
     return lookupProjectTiltUpPids(tiltfilePath, platform, commandRunner) ?? [];
 }
 const PROJECT_TILTFILE_SUFFIX = "/.flisk/.flisk-out/Tiltfile";
+/** Every folder Flisk has recorded as a project root, once each. */
+export function knownProjectRoots(home = homedir()) {
+    return [...new Set(readProjectRecords(home).flatMap((record) => record.roots))].sort();
+}
+const nativeRunLookup = {
+    roots: () => knownProjectRoots(),
+    readState: readNativeRunState,
+    isAlive: isNativeRunSupervisorAlive,
+};
 /**
- * Roots of the Flisk projects that have a `tilt up` running, read from each process's `-f <root>/.flisk/.flisk-out/Tiltfile`
- * (the Tiltfile `flisk up` passes). Lets `flisk down` find the project when it runs outside one. A root counts only while
- * it still has `.flisk/project.json`.
+ * Roots of the Flisk projects that are running, either under `tilt up` (read from each process's
+ * `-f <root>/.flisk/.flisk-out/Tiltfile`) or as a live native run recorded in `<root>/.flisk/native/run.json`. Lets
+ * `flisk down` and the other commands find a project when they run outside one. A root counts only while it still has
+ * `.flisk/project.json`.
  */
-export function findRunningFliskProjects(platform = process.platform, commandRunner = run, isProject = (root) => existsSync(join(root, ".flisk", "project.json"))) {
-    let entries;
-    try {
-        entries = readProcessTable(platform, commandRunner);
-    }
-    catch {
-        return [];
-    }
+export async function findRunningFliskProjects(platform = process.platform, commandRunner = run, isProject = (root) => existsSync(join(root, ".flisk", "project.json")), native = nativeRunLookup) {
     const roots = new Set();
-    for (const { command } of entries) {
-        if (processExecutable(command) !== "tilt" || !/^\S+\s+up\s/.test(command))
+    if (platform !== "win32") {
+        let output;
+        try {
+            output = commandRunner("ps", ["-axo", "pid=,command="]);
+        }
+        catch {
+            output = "";
+        }
+        for (const line of output.split(/\r?\n/)) {
+            const command = /^\s*\d+\s+(.*)$/.exec(line)?.[1] ?? "";
+            const exe = (command.split(/\s+/)[0] ?? "").split("/").at(-1);
+            if (exe !== "tilt" || !/^\S+\s+up\s/.test(command))
+                continue;
+            const tiltfile = / -f (\/.*?\/\.flisk\/\.flisk-out\/Tiltfile)(?= |$)/.exec(command)?.[1];
+            if (!tiltfile)
+                continue;
+            const root = tiltfile.slice(0, -PROJECT_TILTFILE_SUFFIX.length);
+            if (isProject(root))
+                roots.add(root);
+        }
+    }
+    for (const root of native.roots()) {
+        if (!isProject(root))
             continue;
-        const tiltfile = / -f (\/.*?\/\.flisk\/\.flisk-out\/Tiltfile)(?= |$)/.exec(command)?.[1];
-        if (!tiltfile)
-            continue;
-        const root = tiltfile.slice(0, -PROJECT_TILTFILE_SUFFIX.length);
-        if (isProject(root))
+        const state = native.readState(root);
+        // `isNativeRunSupervisorAlive` rejects a stale record whose supervisor pid was reused by another process.
+        if (state && (await native.isAlive(state)))
             roots.add(root);
     }
     return [...roots].sort();
@@ -239,7 +247,7 @@ function realPathOrSelf(dir) {
  * `.autogenerated` folder. A hand-written Compose project in a subfolder, and anything inside a nested Flisk project (a worktree,
  * a project vendored below this one), lives elsewhere or under its own `.flisk`, so Flisk did not start it.
  */
-export function isFliskComposeDir(root, dir) {
+function isFliskComposeDir(root, dir) {
     if (!dir.startsWith(root + sep))
         return false;
     const parts = relativePath(root, dir).split(sep);
