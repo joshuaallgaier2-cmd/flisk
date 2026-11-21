@@ -12,7 +12,7 @@
 import { DEFAULT_BACKEND_LANGUAGE } from "../backend-languages/registry.js";
 import { DATABASE_FRAMEWORK, DATABASE_RESOURCE_TYPE } from "../types/index.js";
 import { extraCatalog, localRequirements, starterCatalog } from "./create-catalog.js";
-import { WINDOWS_RESERVED } from "./validation.js";
+import { starterNeeds } from "./project-templates.js";
 export const CREATE_RUNTIMES = ["local", "docker"];
 /** The stack the Docker route assigns its resources to. */
 export const CREATE_STACK = "app";
@@ -22,6 +22,8 @@ export const LOCAL_BACKEND_DIR = "api";
 /** The extras id that adds the shared Postgres. */
 const POSTGRES_EXTRA = `${DATABASE_RESOURCE_TYPE}:${DATABASE_FRAMEWORK}`;
 const KEBAB = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+/** Names Windows keeps for devices: a folder called con or com1 cannot be created there. */
+const WINDOWS_RESERVED = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 /** Returns true when `name` is a usable project folder name. */
 export function isValidProjectName(name) {
     return KEBAB.test(name) && name.length <= 48 && !WINDOWS_RESERVED.test(name);
@@ -171,11 +173,8 @@ export function asksToStart(answers) {
 }
 /** What the project needs on the machine, in a sentence. Starter requirements come from the starter itself. */
 export function describeRequirements(answers, onPath = () => true) {
-    if (answers.starter) {
-        return starterInfo(answers.starter).local
-            ? "runs on this computer; no Docker, no database"
-            : "Docker (its README says what else)";
-    }
+    if (answers.starter)
+        return starterNeeds(answers.starter);
     if (answers.runtime === "docker")
         return "Docker and Tilt (`flisk doctor` checks what is missing)";
     const programs = localRequirements({
